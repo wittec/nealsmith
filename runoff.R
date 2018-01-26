@@ -18,10 +18,26 @@ rain <- rain %>%
   mutate(raininadj = rain$rainin-10.34) %>%
   separate(date, c("date", "time"), sep = "\\ ") %>%
   arrange(date) %>%
-  mutate(rainlasthr = raininadj - lag(raininadj, default=first(raininadj))) %>%
+  mutate(rainlasthr = raininadj - lag(raininadj, default=first(raininadj)),
+         rainlast24 = zoo::rollapply(rainlasthr, 24, sum, align = "right", fill = 0)) %>%
   separate(time, c("hour"))
 
 rain$date <- as.POSIXct(rain$date, format = "%m/%d/%Y")
+rain <- rain %>%
+  mutate(date = as.character(date))
+
+# 
+# hrandr = hrandr %>%
+#   group_by(property, treatment, year) %>%
+#   arrange(property, treatment, year, month, day) %>%
+#   mutate(rain_last_24 = zoo::rollapply(rain_hourly, 24, sum, align = "right", fill = 0))
+# ```
+
+
+
+
+
+
 
 # Flow
 ############################THIS IS ALTERED FROM JARAD'S RUNOFF-READ FILE
@@ -53,7 +69,7 @@ runoff <- read_dir(path="data-raw",
   
   select(Date, Time, LEVEL, site) %>%
   arrange(site, Date, Time) %>%
-  rename(date = Date, time = Time, level = LEVEL) %>%
+  rename(date = Date, time = Time, levelm = LEVEL) %>%
   filter(date>= "2017-07-11") %>%
   filter(date <= "2017-11-02")
   
@@ -65,33 +81,44 @@ runoff <- runoff %>%
   arrange(site, date, time) %>%
   separate(time, c("hour", "min", "sec"), sep = ":")
 
-############################################################################
+###END OF jARAD'S RUNOFF-READ SCRIPT
+
 #CONVERT LEVEL TO INCHES OF FLOW
 runoff <- runoff %>%
   mutate(convfact = 1000.8)
 
 runoff$convfact[runoff$site=="i2" | runoff$site=="w3"] <- 1045.7
 
-#BELOW IS THE CONVERSION FORMULA FOR CONVERTING LEVEL DATA INTO GPM, THEN I MULTIPLY BY 3.875 TO CONVERT TO LITERS PER MINUTE (LPM)
+#BELOW IS THE CONVERSION FORMULA FOR CONVERTING LEVEL DATA INTO GPM. FIRST HAVE TO CONVERT LEVELM DATA TO FEET BY MULTIPLYING BY 3.28,
+#THEN MULTIPLY BY 5 TO ACCOUNT FOR 5 MINUTES PER READING (gp5m)
 runoff <- runoff %>%
-  mutate(lpm = 3.785*(convfact*(level^2.31)))
+  mutate(gp5m = 5*(convfact*(3.28*levelm)^2.31))
 
-runoff <- runoff %>%
-  aggregate()
+runoff$gp5m <- format(round(runoff$gp5m, 1), nsmall = 1)
+runoff$gp5m <- as.numeric(runoff$gp5m)
+runoff$gp5m[runoff$gp5m == "NaN"] <- 0
 
-  left_join(rain, by=c("date", "hour")) %>%
-  filter(!is.na(flow), !is.na(rain)) %>%
-  group_by(watershed,year) %>%
-  do(HelmersLab::clip_flow(.)) %>%
+runoffhr <- aggregate(runoff$gp5m, by=list(runoff$site, runoff$date, runoff$hour), FUN=sum, na.rm=FALSE) %>%
+  rename(site = Group.1, date = Group.2, hour = Group.3, gphr = x) %>%
+  mutate(date = as.character(date))%>%
+  merge(rain, by=c("date", "hour"), all=TRUE, sort = TRUE) %>%
+  arrange(site, date, hour)
+
+runoffhr$gphrclipped <- runoffhr$gphr
+runoffhr$gphrclipped[runoffhr$rainlast24 == 0] <- 0
   
-  left_join(readr::read_csv("../data-raw/sitenamesandwatershedsizes.csv")) %>%
-  group_by(watershed,year) %>%
+runoffhr <- runoffhr %>%
+  left_join(readr::read_csv("../sitenamesandwatershedsizes.csv")) %>%
+  group_by(site) %>%
   mutate(
-    cumulative_flow = cumsum(flow) * 231 * 5 / # convert gpm to in^3 from 5 minutes
-           (acres * 6.273e6) )                 # normalize by watershed area
-                                               # after converting acres to square inches
+    cumulative_flowin = cumsum(gphrclipped) * 231 / # convert gpm to in^3
+           (acres * 6.273e6) )  # normalize by watershed area
+                                    # after converting acres to square inches
 
-#test <- readr::read_csv("../data-raw/sitenamesandwatershedsizes.csv")
+
+#################LEFT OFF HERE
+runoffhr$cumulative_flowin <- format(round(runoff$gp5m, 1), nsmall = 1)
+
 
 
 ggplot(flow, aes(x = date_time, y = cumulative_flow, 
