@@ -33,12 +33,6 @@ rain <- rain %>%
 #   mutate(rain_last_24 = zoo::rollapply(rain_hourly, 24, sum, align = "right", fill = 0))
 # ```
 
-
-
-
-
-
-
 # Flow
 ############################THIS IS ALTERED FROM JARAD'S RUNOFF-READ FILE
 setwd("runoff")
@@ -83,20 +77,25 @@ runoff <- runoff %>%
 
 ###END OF jARAD'S RUNOFF-READ SCRIPT
 
+
+#####THIS IS THE RIGHT CONVERSION EQUATION
+# FOR 2.0 H FLUME, LPS = 0.022285358-0.55496382*(LEVELM^0.5)+125.5275778*(LEVELM^1.5)+939.5717311*(LEVELM^2.5)
+# FOR 2.5 H FLUME, LPS = 0.042446953-0.90725263*(levelm^0.4)+108.676075*(levelm^1.4)+937.5943603*(levelm^2.5)
+
 #CONVERT LEVEL TO INCHES OF FLOW
 runoff <- runoff %>%
-  mutate(convfact = 1000.8)
+  mutate(lps = 0.022285358-0.55496382*(levelm^0.5)+125.5275778*(levelm^1.5)+939.5717311*(levelm^2.5))
 
-runoff$convfact[runoff$site=="i2" | runoff$site=="w3"] <- 1045.7
+runoff$lps <- runoff$lps[runoff$site=="i2" | runoff$site=="w3"] <- 0.042446953-0.90725263*(runoff$levelm^0.4)+108.676075*(runoff$levelm^1.4)+937.5943603*(runoff$levelm^2.5)
 
-#BELOW IS THE CONVERSION FORMULA FOR CONVERTING LEVEL DATA INTO GPM. FIRST HAVE TO CONVERT LEVELM DATA TO FEET BY MULTIPLYING BY 3.28,
-#THEN MULTIPLY BY 5 TO ACCOUNT FOR 5 MINUTES PER READING (gp5m)
 runoff <- runoff %>%
-  mutate(gp5m = 5*(convfact*(3.28*levelm)^2.31))
+  mutate(gp5m = 5*(lps*.264172)*60)
 
-runoff$gp5m <- format(round(runoff$gp5m, 1), nsmall = 1)
-runoff$gp5m <- as.numeric(runoff$gp5m)
+
+runoff$gp5m <- format(round(runoff$gp5m, 2), nsmall = 2)
+
 runoff$gp5m[runoff$gp5m == "NaN"] <- 0
+runoff$gp5m <- as.numeric(runoff$gp5m)
 
 runoffhr <- aggregate(runoff$gp5m, by=list(runoff$site, runoff$date, runoff$hour), FUN=sum, na.rm=FALSE) %>%
   rename(site = Group.1, date = Group.2, hour = Group.3, gphr = x) %>%
@@ -115,9 +114,69 @@ runoffhr <- runoffhr %>%
            (acres * 6.273e6) )  # normalize by watershed area
                                     # after converting acres to square inches
 
+runoffhr$cumulative_flowin <- format(round(runoffhr$cumulative_flowin, digits = 2))
+runoffhr <- filter(runoffhr, site!='NA' & date<='2017-10-31')
+runoffhr$cumulative_flowin <- as.numeric(runoffhr$cumulative_flowin)
 
-#################LEFT OFF HERE
-runoffhr$cumulative_flowin <- format(round(runoff$gp5m, 1), nsmall = 1)
+
+runday <- runoffhr %>%
+  group_by(site, date) %>%
+  summarise_at(c("cumulative_flowin"), sum, na.rm=T)
+
+trtrunday <- runday %>%
+  mutate(trt = "allcrop")
+
+trtrunday$trt[trtrunday$site=="b1" | trtrunday$site=="w1" | trtrunday$site=="i2"] <- "10toe"
+
+trtrunday <- trtrunday %>%
+  group_by(trt, date) %>%
+  summarise_at(c("cumulative_flowin"), mean, na.rm=T)
+  
+
+
+rainday <- runoffhr %>%
+  select(date, hour, site, raininadj) %>%
+  filter(site=='b1', hour=='23') %>%
+  select(-hour, -site)
+
+
+date <- as.data.frame(rainday$date)
+rainday <- as.data.frame(rainday$raininadj) %>%
+  cbind(date)
+
+#dplyr rename didn't work so...
+names(rainday)[1] <- "rainin"
+names(rainday)[2] <- "date"
+# 
+# runday <- runday %>%
+#   left_join(rainday)
+
+
+test <- runday %>% group_by(site) %>% filter(cumulative_flowin-lag(cumulative_flowin) > 10)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
