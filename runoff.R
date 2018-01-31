@@ -61,9 +61,9 @@ runoff <- read_dir(path="data-raw",
   mutate(Date = lubridate::parse_date_time(Date,
                                                 orders = c("mdY"))) %>%
   
-  select(Date, Time, LEVEL, site) %>%
+  select(Date, Time, LEVEL, TEMPERATURE, site) %>%
   arrange(site, Date, Time) %>%
-  rename(date = Date, time = Time, levelm = LEVEL) %>%
+  rename(date = Date, time = Time, levelm = LEVEL, temp = TEMPERATURE) %>%
   filter(date>= "2017-07-11") %>%
   filter(date <= "2017-11-02")
   
@@ -78,15 +78,27 @@ runoff <- runoff %>%
 ###END OF jARAD'S RUNOFF-READ SCRIPT
 
 
-#####THIS IS THE RIGHT CONVERSION EQUATION
+#####THIS IS THE CONVERSION EQUATION
 # FOR 2.0 H FLUME, LPS = 0.022285358-0.55496382*(LEVELM^0.5)+125.5275778*(LEVELM^1.5)+939.5717311*(LEVELM^2.5)
 # FOR 2.5 H FLUME, LPS = 0.042446953-0.90725263*(levelm^0.4)+108.676075*(levelm^1.4)+937.5943603*(levelm^2.5)
 
-#CONVERT LEVEL TO INCHES OF FLOW
-runoff <- runoff %>%
-  mutate(lps = 0.022285358-0.55496382*(levelm^0.5)+125.5275778*(levelm^1.5)+939.5717311*(levelm^2.5))
 
-runoff$lps <- runoff$lps[runoff$site=="i2" | runoff$site=="w3"] <- 0.042446953-0.90725263*(runoff$levelm^0.4)+108.676075*(runoff$levelm^1.4)+937.5943603*(runoff$levelm^2.5)
+runoff$levelm[runoff$levelm<0] <- 0
+
+runoff <- runoff %>%
+  mutate(lps = ifelse(site=="i2" | site=="w3", 0.042446953-0.90725263*(levelm^0.4)+108.676075*(levelm^1.4)+937.5943603*(levelm^2.5), 
+                      0.022285358-0.55496382*(levelm^0.5)+125.5275778*(levelm^1.5)+939.5717311*(levelm^2.5)))
+
+#THE IFELSE LINE ABOVE REPLACES THE COMMENTED SCRIPT BELOW
+# 
+# runoff <- runoff %>%
+#   mutate(lps = 0.022285358-0.55496382*(levelm^0.5)+125.5275778*(levelm^1.5)+939.5717311*(levelm^2.5))
+# 
+# runoff$lps[runoff$site=="i2" | runoff$site=="w3"] <- 0.042446953-0.90725263*(runoff$levelm^0.4)+108.676075*(runoff$levelm^1.4)+937.5943603*(runoff$levelm^2.5)
+
+
+#AT VERY LOW LEVELS, THERE CAN BE NEGATIVE VALUES FROM THE CONVERSION EQUATIONS
+runoff$lps[runoff$lps<0] <- 0
 
 runoff <- runoff %>%
   mutate(gp5m = 5*(lps*.264172)*60)
@@ -132,27 +144,77 @@ trtrunday <- trtrunday %>%
   group_by(trt, date) %>%
   summarise_at(c("cumulative_flowin"), mean, na.rm=T)
   
+test <- runday %>%
+  filter(date=="2017-10-31")
 
-
-rainday <- runoffhr %>%
-  select(date, hour, site, raininadj) %>%
-  filter(site=='b1', hour=='23') %>%
-  select(-hour, -site)
-
-
-date <- as.data.frame(rainday$date)
-rainday <- as.data.frame(rainday$raininadj) %>%
-  cbind(date)
-
-#dplyr rename didn't work so...
-names(rainday)[1] <- "rainin"
-names(rainday)[2] <- "date"
+rainsummary <- readr::read_csv("../rain/nealsmithrain2017.csv", skip = 8, col_names = c("site", "date", "rainin")) %>%
+  mutate(date = gsub(" CST", "", date)) %>%
+  select(-site) %>%
+  separate(date, c("date", "time"), sep = "\\ ") %>%
+  mutate(date = as.POSIXct(date, format = "%m/%d/%Y")) %>%
+  filter(date>="2017-04-01") %>%
+  filter(date<"2017-11-01") %>%
+  filter(time=="23:48") %>%
+  mutate(raincm = rainin*2.54)
+  
+# 
+# rainday <- runoffhr %>%
+#   select(date, hour, site, raininadj) %>%
+#   filter(site=='b1', hour=='23') %>%
+#   select(-hour, -site)
+# 
+# 
+# date <- as.data.frame(rainday$date)
+# rainday <- as.data.frame(rainday$raininadj) %>%
+#   cbind(date)
+# 
+# #dplyr rename didn't work so...
+# names(rainday)[1] <- "rainin"
+# names(rainday)[2] <- "date"
 # 
 # runday <- runday %>%
 #   left_join(rainday)
 
+write.csv(trtrunday, file= "./trtrunoffsummary.csv" )
+write.csv(rainsummary, file="./raindaysummary.csv")
 
-test <- runday %>% group_by(site) %>% filter(cumulative_flowin-lag(cumulative_flowin) > 10)
+
+#Gio's script for graphs
+
+library(tidyverse)
+library(lubridate)
+
+runoffhr %>%
+  filter(site == "b6") %>%    # b1, b6, i2, i3, w1, w3
+  ungroup() %>%
+  select(date, hour, raininadj, rainlasthr, rainlast24, gphr, gphrclipped) %>%
+  mutate(timestamp = ymd_h(paste(date, hour), tz = "UTC")) %>%
+  filter(month(timestamp) < 11) %>%
+  fill(rainlast24) %>%
+  mutate(background = ifelse(rainlast24 > 0, timestamp, NA),
+         background = as_datetime(background)) %>%
+  mutate(xstrat = background,
+         xend = lead(background),
+         xstrat = ifelse(is.na(xend), NA, xstrat) %>% as_datetime(),
+         background = NULL) %>%
+  ggplot(aes(x = timestamp)) +
+  geom_rect(aes(xmin = xstrat, xmax = xend, ymin = 0, ymax = 4000), alpha = 0.25, fill = "grey50") +
+  geom_step(aes(y = 4000 - rainlasthr * 700), colour = 'dodgerblue2') + 
+  geom_hline(yintercept = 4000, colour = "grey90") +
+  geom_line(aes(y = gphr), colour = "grey20", alpha = 0.75, size = 1) +
+  geom_line(aes(y = gphrclipped), colour = "orange", size = 1) +
+  theme_light() +
+  labs(title = "SITE b6", x = NULL, y = "Surface Runoff (gphr)\nRainfall (not to scale)") +
+  theme(plot.title = element_text(size = 20, hjust = 0.5),
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 14))
+
+test1 <- runoff %>% 
+  filter(site=="b6", temp>5, date>"2017-08-23") %>%
+  filter(date<"2017-08-24")
+
+qplot(test1$temp, test1$levelm, test1)
+
 
 
 #########################BELOW IS NOT USED
