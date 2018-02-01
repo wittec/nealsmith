@@ -64,7 +64,7 @@ runoff <- read_dir(path="data-raw",
   select(Date, Time, LEVEL, TEMPERATURE, site) %>%
   arrange(site, Date, Time) %>%
   rename(date = Date, time = Time, levelm = LEVEL, temp = TEMPERATURE) %>%
-  filter(date>= "2017-07-11") %>%
+  filter(date>= "2017-07-10") %>%
   filter(date <= "2017-11-02")
   
 runoff$time <- as.POSIXct(runoff$time, format = "%I:%M:%S %p")
@@ -77,32 +77,35 @@ runoff <- runoff %>%
 
 ###END OF jARAD'S RUNOFF-READ SCRIPT
 
+#NEED TO ADJUST LEVELM VALUES BY THE FIRST FEW VALUES OF EACH SITE... I FILLED THE STILLING WELL WHEN DEPLOYING THE PROBES
+runoff1 <- runoff %>%
+  group_by(site) %>%
+  filter(date<"2017-07-11") %>%
+  summarise_at(c("levelm"), mean, na.rm=F) %>%
+  rename(leveladj = levelm)
+
+runoff <- runoff %>%
+  left_join(runoff1) %>%
+  mutate(levelm = levelm-leveladj)
+
+#CHANGING NEGATIVE LEVELM'S TO 0
+runoff$levelm[runoff$levelm<0] <- 0
 
 #####THIS IS THE CONVERSION EQUATION
 # FOR 2.0 H FLUME, LPS = 0.022285358-0.55496382*(LEVELM^0.5)+125.5275778*(LEVELM^1.5)+939.5717311*(LEVELM^2.5)
 # FOR 2.5 H FLUME, LPS = 0.042446953-0.90725263*(levelm^0.4)+108.676075*(levelm^1.4)+937.5943603*(levelm^2.5)
 
-
-runoff$levelm[runoff$levelm<0] <- 0
-
 runoff <- runoff %>%
-  mutate(lps = ifelse(site=="i2" | site=="w3", 0.042446953-0.90725263*(levelm^0.4)+108.676075*(levelm^1.4)+937.5943603*(levelm^2.5), 
+  mutate(lps = ifelse(site=="i2" | site=="w3",
+                      0.042446953-0.90725263*(levelm^0.4)+108.676075*(levelm^1.4)+937.5943603*(levelm^2.5), 
                       0.022285358-0.55496382*(levelm^0.5)+125.5275778*(levelm^1.5)+939.5717311*(levelm^2.5)))
-
-#THE IFELSE LINE ABOVE REPLACES THE COMMENTED SCRIPT BELOW
-# 
-# runoff <- runoff %>%
-#   mutate(lps = 0.022285358-0.55496382*(levelm^0.5)+125.5275778*(levelm^1.5)+939.5717311*(levelm^2.5))
-# 
-# runoff$lps[runoff$site=="i2" | runoff$site=="w3"] <- 0.042446953-0.90725263*(runoff$levelm^0.4)+108.676075*(runoff$levelm^1.4)+937.5943603*(runoff$levelm^2.5)
-
 
 #AT VERY LOW LEVELS, THERE CAN BE NEGATIVE VALUES FROM THE CONVERSION EQUATIONS
 runoff$lps[runoff$lps<0] <- 0
 
+#CONVERTING LPS TO GALLONS PER 5 MINUTES
 runoff <- runoff %>%
   mutate(gp5m = 5*(lps*.264172)*60)
-
 
 runoff$gp5m <- format(round(runoff$gp5m, 2), nsmall = 2)
 
@@ -135,17 +138,29 @@ runday <- runoffhr %>%
   group_by(site, date) %>%
   summarise_at(c("cumulative_flowin"), sum, na.rm=T)
 
+#SINCE sites b6 and i3 so high, we are throwing them out for the trtrunday calc's
 trtrunday <- runday %>%
+  filter(site!="b6") %>%
+  filter(site!="i3") %>%
   mutate(trt = "allcrop")
 
-trtrunday$trt[trtrunday$site=="b1" | trtrunday$site=="w1" | trtrunday$site=="i2"] <- "10toe"
+trtrunday$trt[trtrunday$site=="b1" | trtrunday$site=="w1" | trtrunday$site=="i2"] <- "tentoe"
 
 trtrunday <- trtrunday %>%
   group_by(trt, date) %>%
-  summarise_at(c("cumulative_flowin"), mean, na.rm=T)
-  
-test <- runday %>%
+  summarise_at(c("cumulative_flowin"), mean, na.rm=T) %>%
+  mutate(cumulative_flowin = format(round(cumulative_flowin, 2), nsmall = 2)) %>%
+  mutate(cumulative_flowin = as.numeric(cumulative_flowin),
+         cumulative_cm = cumulative_flowin*2.54) %>%
+  select(-cumulative_flowin) %>%
+  spread(trt, cumulative_cm) %>%
+  select(date, allcrop, tentoe)
+
+
+#THIS IS FOR SEEING THE FINAL RUNOFF INCHES BY SITE
+runtotal <- runday %>%
   filter(date=="2017-10-31")
+write.csv(test, file= "./runofftotalinchesbysite.csv")
 
 rainsummary <- readr::read_csv("../rain/nealsmithrain2017.csv", skip = 8, col_names = c("site", "date", "rainin")) %>%
   mutate(date = gsub(" CST", "", date)) %>%
@@ -156,24 +171,6 @@ rainsummary <- readr::read_csv("../rain/nealsmithrain2017.csv", skip = 8, col_na
   filter(date<"2017-11-01") %>%
   filter(time=="23:48") %>%
   mutate(raincm = rainin*2.54)
-  
-# 
-# rainday <- runoffhr %>%
-#   select(date, hour, site, raininadj) %>%
-#   filter(site=='b1', hour=='23') %>%
-#   select(-hour, -site)
-# 
-# 
-# date <- as.data.frame(rainday$date)
-# rainday <- as.data.frame(rainday$raininadj) %>%
-#   cbind(date)
-# 
-# #dplyr rename didn't work so...
-# names(rainday)[1] <- "rainin"
-# names(rainday)[2] <- "date"
-# 
-# runday <- runday %>%
-#   left_join(rainday)
 
 write.csv(trtrunday, file= "./trtrunoffsummary.csv" )
 write.csv(rainsummary, file="./raindaysummary.csv")
@@ -198,9 +195,9 @@ runoffhr %>%
          xstrat = ifelse(is.na(xend), NA, xstrat) %>% as_datetime(),
          background = NULL) %>%
   ggplot(aes(x = timestamp)) +
-  geom_rect(aes(xmin = xstrat, xmax = xend, ymin = 0, ymax = 4000), alpha = 0.25, fill = "grey50") +
-  geom_step(aes(y = 4000 - rainlasthr * 700), colour = 'dodgerblue2') + 
-  geom_hline(yintercept = 4000, colour = "grey90") +
+  geom_rect(aes(xmin = xstrat, xmax = xend, ymin = 0, ymax = 1000), alpha = 0.25, fill = "grey50") +
+  geom_step(aes(y = 1000 - rainlasthr * 700), colour = 'dodgerblue2') + 
+  geom_hline(yintercept = 1000, colour = "grey90") +
   geom_line(aes(y = gphr), colour = "grey20", alpha = 0.75, size = 1) +
   geom_line(aes(y = gphrclipped), colour = "orange", size = 1) +
   theme_light() +
