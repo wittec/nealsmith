@@ -32,23 +32,43 @@ gwdata2017$trt[gwdata2017$sitecatch=="I1" | gwdata2017$sitecatch=="B2" | gwdata2
 gwdata2017$trt[gwdata2017$sitecatch=="W2" | gwdata2017$sitecatch=="B3" | gwdata2017$sitecatch=="B4"] <- "twentystrip"
 
 gwdata2017 <- gwdata2017 %>%
-  group_by(trt, month) %>%
+  group_by(trt, pos, month) %>%
   summarise_at(c("no3mgl", "drpmgl"), mean, na.rm=T) %>%
   mutate(no3mgl = format(round(no3mgl, 2), nsmall = 2),
          drpmgl = format(round(drpmgl, 2), nsmall = 2)) 
 
-no3trt <- gwdata2017 %>%
+no3trtsum <- gwdata2017 %>%
+  filter(pos=="sum") %>%
+  select(-drpmgl) %>%
+  spread(trt, no3mgl) %>%
+  select(month, allcrop, tentoe, tenstrip, twentystrip)
+
+no3trttoe <- gwdata2017 %>%
+  filter(pos=="toe") %>%
   select(-drpmgl) %>%
   spread(trt, no3mgl) %>%
   select(month, allcrop, tentoe, tenstrip, twentystrip)
 
 
-drptrt <- gwdata2017 %>%
+drptrtsum <- gwdata2017 %>%
+  filter(pos=="sum") %>%
   select(-no3mgl) %>%
   spread(trt, drpmgl) %>%
   select(month, allcrop, tentoe, tenstrip, twentystrip)
 
-write.csv(no3trt, "./groundwater/no3trt.csv")
-write.csv(drptrt, "./groundwater/drptrt.csv")
+drptrttoe <- gwdata2017 %>%
+  filter(pos=="toe") %>%
+  select(-no3mgl) %>%
+  spread(trt, drpmgl) %>%
+  select(month, allcrop, tentoe, tenstrip, twentystrip)
+
+
+write.csv(no3trtsum, "./groundwater/no3trtsum.csv")
+
+write.csv(no3trttoe, "./groundwater/no3trttoe.csv")
+
+write.csv(drptrtsum, "./groundwater/drptrtsum.csv")
+
+write.csv(drptrttoe, "./groundwater/drptrttoe.csv")
 
 #this is a test
