@@ -8,14 +8,14 @@ library("tidyr")
 
 # Rain
 
-rain <- readr::read_csv("./rain/nealsmithrain2017.csv", skip = 8, col_names = c("site", "date", "rainin")) %>%
+rain <- readr::read_csv("./rain/nealsmithrain2018.csv", skip = 8, col_names = c("site", "date", "rainin")) %>%
   mutate(date = gsub(" CST", "", date)) %>%
   select(-site) %>%
-  filter(date>="07/10/2017 00:00")%>%
-  filter(date<="11/01/2017 00:00")
+  filter(date>="05/01/2018 00:00")%>%
+  filter(date<="11/01/2018 00:00")
 
 rain <- rain %>%
-  mutate(raininadj = rain$rainin-10.34) %>%
+  mutate(raininadj = rain$rainin-4.91) %>%
   separate(date, c("date", "time"), sep = "\\ ") %>%
   arrange(date) %>%
   mutate(rainlasthr = raininadj - lag(raininadj, default=first(raininadj)),
@@ -54,9 +54,10 @@ read_dir = function(path, pattern, into) {
   plyr::ldply(files, my_runoff_csv, into = into)
 }
 
+
 runoff <- read_dir(path="data-raw",
                    pattern = "*.csv",
-                   into = c("data", "raw", "site", "csv")) %>%
+                   into = c("data", "raw", "year", "site", "csv")) %>%
   
   mutate(Date = lubridate::parse_date_time(Date,
                                                 orders = c("mdY"))) %>%
@@ -64,8 +65,8 @@ runoff <- read_dir(path="data-raw",
   select(Date, Time, LEVEL, TEMPERATURE, site) %>%
   arrange(site, Date, Time) %>%
   rename(date = Date, time = Time, levelm = LEVEL, temp = TEMPERATURE) %>%
-  filter(date>= "2017-07-10") %>%
-  filter(date <= "2017-11-02")
+  filter(date>= "2018-04-01") %>%
+  filter(date <= "2018-11-01")
   
 runoff$time <- as.POSIXct(runoff$time, format = "%I:%M:%S %p")
   
@@ -80,7 +81,7 @@ runoff <- runoff %>%
 #NEED TO ADJUST LEVELM VALUES BY THE FIRST FEW VALUES OF EACH SITE... I FILLED THE STILLING WELL WHEN DEPLOYING THE PROBES
 runoff1 <- runoff %>%
   group_by(site) %>%
-  filter(date<"2017-07-11") %>%
+  filter(date<"2018-05-02", hour>"15") %>%
   summarise_at(c("levelm"), mean, na.rm=F) %>%
   rename(leveladj = levelm)
 
@@ -130,13 +131,16 @@ runoffhr <- runoffhr %>%
                                     # after converting acres to square inches
 
 runoffhr$cumulative_flowin <- format(round(runoffhr$cumulative_flowin, digits = 2))
-runoffhr <- filter(runoffhr, site!='NA' & date<='2017-10-31')
+runoffhr <- filter(runoffhr, site!='NA' & date<='2018-10-31')
 runoffhr$cumulative_flowin <- as.numeric(runoffhr$cumulative_flowin)
 
 
 runday <- runoffhr %>%
   group_by(site, date) %>%
   summarise_at(c("cumulative_flowin"), sum, na.rm=T)
+
+#NOT SURE WHAT TO DO AFTER HERE...RUNDAY END TOTALS ARE STILL HIGH FOR AT LEAST SEVERAL SITES 
+
 
 #SINCE sites b6 and i3 so high, we are throwing them out for the trtrunday calc's
 trtrunday <- runday %>%
